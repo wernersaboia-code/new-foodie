@@ -1,63 +1,77 @@
-import Link from 'next/link';
+// Arquivo: app/s/[subdomain]/page.tsx
+import prisma from "@/lib/prisma";
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
-import { getSubdomainData } from '@/lib/subdomains';
-import { protocol, rootDomain } from '@/lib/utils';
+import { notFound } from "next/navigation";
+import { Store } from "lucide-react";
+import { StorefrontMenu } from "./StorefrontMenu"; // Chama o arquivo gigante do carrinho!
 
 export async function generateMetadata({
-  params
-}: {
+                                         params
+                                       }: {
   params: Promise<{ subdomain: string }>;
 }): Promise<Metadata> {
   const { subdomain } = await params;
-  const subdomainData = await getSubdomainData(subdomain);
 
-  if (!subdomainData) {
-    return {
-      title: rootDomain
-    };
-  }
+  const restaurant = await prisma.restaurant.findUnique({
+    where: { subdomain },
+    select: { name: true }
+  });
+
+  if (!restaurant) return { title: 'Restaurante não encontrado' };
 
   return {
-    title: `${subdomain}.${rootDomain}`,
-    description: `Subdomain page for ${subdomain}.${rootDomain}`
+    title: `${restaurant.name} | Cardápio Digital`,
+    description: `Faça seu pedido online no ${restaurant.name}.`
   };
 }
 
+// 👇 ESTE É O "DEFAULT EXPORT" QUE O NEXT.JS ESTAVA SENTINDO FALTA!
 export default async function SubdomainPage({
-  params
-}: {
+                                              params
+                                            }: {
   params: Promise<{ subdomain: string }>;
 }) {
   const { subdomain } = await params;
-  const subdomainData = await getSubdomainData(subdomain);
 
-  if (!subdomainData) {
+  const restaurant = await prisma.restaurant.findUnique({
+    where: { subdomain },
+    include: {
+      categories: {
+        include: {
+          products: {
+            where: { isAvailable: true },
+            orderBy: { name: "asc" }
+          },
+        },
+        orderBy: { name: "asc" }
+      },
+    },
+  });
+
+  if (!restaurant) {
     notFound();
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-b from-blue-50 to-white p-4">
-      <div className="absolute top-4 right-4">
-        <Link
-          href={`${protocol}://${rootDomain}`}
-          className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
-        >
-          {rootDomain}
-        </Link>
-      </div>
+      <div className="min-h-screen bg-gray-50 pb-28">
+        <div className="bg-emerald-600 h-32 md:h-48 w-full relative"></div>
 
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-9xl mb-6">{subdomainData.emoji}</div>
-          <h1 className="text-4xl font-bold tracking-tight text-gray-900">
-            Welcome to {subdomain}.{rootDomain}
-          </h1>
-          <p className="mt-3 text-lg text-gray-600">
-            This is your custom subdomain page
-          </p>
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 -mt-12 relative z-10">
+
+          <div className="bg-white rounded-xl shadow-sm p-4 md:p-6 mb-8 flex items-center gap-4">
+            <div className="w-16 h-16 md:w-20 md:h-20 bg-emerald-100 rounded-full flex items-center justify-center border-4 border-white shadow-sm shrink-0">
+              <Store className="w-8 h-8 md:w-10 md:h-10 text-emerald-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-900">{restaurant.name}</h1>
+              <p className="text-emerald-600 text-sm font-medium mt-1">• Aberto para pedidos</p>
+            </div>
+          </div>
+
+          {/* Aqui a página "injeta" o visual do carrinho que criamos */}
+          <StorefrontMenu categories={restaurant.categories} />
+
         </div>
       </div>
-    </div>
   );
 }

@@ -4,8 +4,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("POSTGRES_PRISMA_URL") // Conexão principal
-  directUrl = env("POSTGRES_URL_NON_POOLING") // Usado para criar as tabelas sem erro
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 // 🏢 O RESTAURANTE (O nosso "Tenant" / Subdomínio)
@@ -63,15 +63,21 @@ model Product {
 
 // 🛵 OS PEDIDOS
 model Order {
-  id           String @id @default(cuid())
+  id           String @id @default(uuid())
   customerName String
-  status       String @default("PENDING") // PENDING, PREPARING, DELIVERED
-  total        Float
+
+  // 👇 A MÁGICA DA SUA IDEIA AQUI
+  orderType       String  @default("DELIVERY") // Pode ser: "DELIVERY" (Entrega), "DINE_IN" (Mesa), "PICKUP" (Retirada)
+  tableNumber     String? // Opcional: Só preenche se for Mesa
+  deliveryAddress String? // Opcional: Só preenche se for Entrega
+
+  status String @default("PENDING") // PENDING (Pendente), PREPARING (Preparando), FINISHED (Finalizado)
+  total  Float
+  items  Json // Salva o carrinho inteiro (Hambúrguer, Coca, etc)
 
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
-
-  @@index([restaurantId])
+  updatedAt DateTime @updatedAt
 }
