@@ -1,35 +1,28 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { SessionProvider } from "@/components/auth";
-import "./globals.css";
+import type { Metadata } from 'next';
+import { Geist } from 'next/font/google';
+import { SpeedInsights } from '@vercel/speed-insights/next';
+import './globals.css';
 
 const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  variable: '--font-geist-sans',
+  subsets: ['latin']
 });
 
 export const metadata: Metadata = {
-  title: "Platform Template - AI Code Generation",
-  description: "Generate and deploy code with AI agents in sandboxes",
+  title: 'Platforms Starter Kit',
+  description: 'Next.js template for building a multi-tenant SaaS.'
 };
 
 export default function RootLayout({
-  children,
+  children
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <SessionProvider />
+      <body className={`${geistSans.variable} antialiased`}>
         {children}
+        <SpeedInsights />
       </body>
     </html>
   );

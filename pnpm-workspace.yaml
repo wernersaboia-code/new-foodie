@@ -1,5 +1,6 @@
-packages:
-  - .
-ignoredBuiltDependencies:
+onlyBuiltDependencies:
+  - '@prisma/engines'
+  - '@tailwindcss/oxide'
+  - '@vercel/speed-insights'
+  - prisma
   - sharp
-  - unrs-resolver

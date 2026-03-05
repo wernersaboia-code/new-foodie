@@ -1,196 +1,90 @@
-# Platform Template
+# Next.js Multi-Tenant Example
 
-A vibe coding platform that lets users generate code with AI agents and deploy to Vercel with one click.
+A production-ready example of a multi-tenant application built with Next.js 15, featuring custom subdomains for each tenant.
 
-## Overview
+## Features
 
-This template demonstrates building an AI-powered code generation platform using:
+- ✅ Custom subdomain routing with Next.js middleware
+- ✅ Tenant-specific content and pages
+- ✅ Shared components and layouts across tenants
+- ✅ Redis for tenant data storage
+- ✅ Admin interface for managing tenants
+- ✅ Emoji support for tenant branding
+- ✅ Support for local development with subdomains
+- ✅ Compatible with Vercel preview deployments
 
-- **AI Agents** (Claude Agent SDK, OpenAI Codex) running in isolated sandboxes
-- **Vercel Sandbox** for secure code execution
-- **Vercel SDK** for deploying generated code to production
-- **Real-time streaming** of AI responses and tool execution
+## Tech Stack
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                       Platform Template                          │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────┐    ┌─────────────────────────────────────────┐ │
-│  │   Chat UI    │    │           Agent Registry                │ │
-│  │              │    │  ┌─────────────┬─────────────────────┐  │ │
-│  │ [Agent: ▼]   │───▶│  │ Claude Agent│ Codex Agent         │  │ │
-│  └──────────────┘    │  │ SDK         │ SDK                 │  │ │
-│                      │  └──────┬──────┴──────┬──────────────┘  │ │
-│                      └─────────┼─────────────┼─────────────────┘ │
-│                                └──────┬──────┘                   │
-│                                       ▼                          │
-│                      ┌────────────────────────────────────────┐  │
-│                      │      AI Gateway (VERCEL_OIDC_TOKEN)    │  │
-│                      └────────────────────────────────────────┘  │
-│                                       │                          │
-│                                       ▼                          │
-│                      ┌────────────────────────────────────────┐  │
-│                      │         Shared MCP Sandbox Tools       │  │
-│                      │  read_file │ write_file │ run_command  │  │
-│                      └────────────────────────────────────────┘  │
-│                                       │                          │
-│                                       ▼                          │
-│                      ┌────────────────────────────────────────┐  │
-│                      │           @vercel/sandbox              │  │
-│                      │         (Firecracker MicroVM)          │  │
-│                      └────────────────────────────────────────┘  │
-│                                       │                          │
-│                                       ▼                          │
-│                      ┌────────────────────────────────────────┐  │
-│                      │          Deploy to Vercel              │  │
-│                      │           @vercel/sdk                  │  │
-│                      └────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-```
+- [Next.js 15](https://nextjs.org/) with App Router
+- [React 19](https://react.dev/)
+- [Upstash Redis](https://upstash.com/) for data storage
+- [Tailwind 4](https://tailwindcss.com/) for styling
+- [shadcn/ui](https://ui.shadcn.com/) for the design system
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 20+
-- pnpm 9+
+- Node.js 18.17.0 or later
+- pnpm (recommended) or npm/yarn
+- Upstash Redis account (for production)
 
 ### Installation
 
-```bash
-pnpm install
-```
+1. Clone the repository:
 
-### Environment Variables
+   ```bash
+   git clone https://github.com/vercel/platforms.git
+   cd platforms
+   ```
 
-Create a `.env.local` file:
+2. Install dependencies:
 
-```bash
-# AI Gateway (routes all LLM calls)
-AI_GATEWAY_BASE_URL=https://ai-gateway.vercel.sh
-VERCEL_OIDC_TOKEN=        # For AI Gateway auth
+   ```bash
+   pnpm install
+   ```
 
-# Vercel Deployments
-VERCEL_PARTNER_TOKEN=
-VERCEL_PARTNER_TEAM_ID=
+3. Set up environment variables:
+   Create a `.env.local` file in the root directory with:
 
-# Proxy URL
-PROXY_BASE_URL=
-```
+   ```
+   KV_REST_API_URL=your_redis_url
+   KV_REST_API_TOKEN=your_redis_token
+   ```
 
-### Development
+4. Start the development server:
 
-```bash
-pnpm dev
-```
+   ```bash
+   pnpm dev
+   ```
 
-Open [http://localhost:3000](http://localhost:3000) to see the app.
+5. Access the application:
+   - Main site: http://localhost:3000
+   - Admin panel: http://localhost:3000/admin
+   - Tenants: http://[tenant-name].localhost:3000
 
-## Project Structure
+## Multi-Tenant Architecture
 
-```
-platform-template/
-├── app/                          # Next.js App Router
-│   ├── api/
-│   │   ├── ai/                   # AI proxy and session management
-│   │   └── auth/                 # Vercel OAuth routes
-│   ├── rpc/[[...rest]]/          # oRPC endpoint handler
-│   ├── page.tsx                  # Main page
-│   └── layout.tsx                # Root layout with providers
-│
-├── components/                   # React components
-│   ├── ai-elements/              # AI UI components (chat, tools, terminal)
-│   ├── ui/                       # Base UI components (shadcn/ui)
-│   ├── main-layout.tsx           # Main app layout
-│   ├── preview.tsx               # Live preview iframe
-│   └── workspace-panel.tsx       # File explorer/workspace
-│
-├── lib/                          # Core business logic
-│   ├── agents/                   # AI agent system
-│   │   ├── types.ts              # Agent interfaces & StreamChunk types
-│   │   ├── registry.ts           # Agent registry
-│   │   ├── claude-agent.ts       # Claude Agent SDK implementation
-│   │   └── codex-agent.ts        # OpenAI Codex implementation
-│   ├── auth/                     # Authentication (OAuth, JWT)
-│   ├── rpc/                      # oRPC router & procedures
-│   │   └── procedures/           # chat, sandbox, deploy, claim
-│   ├── templates/                # Project templates (Next.js, Vite)
-│   └── store/                    # Zustand state management
-│
-├── sdk/                          # Bundled @vercel/sdk
-└── scripts/                      # Development & benchmark scripts
-```
+This application demonstrates a subdomain-based multi-tenant architecture where:
 
-## Tech Stack
+- Each tenant gets their own subdomain (`tenant.yourdomain.com`)
+- The middleware handles routing requests to the correct tenant
+- Tenant data is stored in Redis using a `subdomain:{name}` key pattern
+- The main domain hosts the landing page and admin interface
+- Subdomains are dynamically mapped to tenant-specific content
 
-| Category | Technology |
-|----------|------------|
-| Framework | Next.js 16 (App Router) |
-| Runtime | React 19 |
-| AI SDKs | Claude Agent SDK, Vercel AI SDK |
-| Sandbox | @vercel/sandbox (Firecracker MicroVMs) |
-| Deployment | @vercel/sdk |
-| RPC | oRPC (type-safe) |
-| State | Zustand |
-| Validation | Zod |
-| Styling | Tailwind CSS 4 |
-| UI Components | Radix UI |
-| Auth | Arctic (OAuth), Jose (JWT) |
-| Persistence | Upstash Redis |
+The middleware (`middleware.ts`) intelligently detects subdomains across various environments (local development, production, and Vercel preview deployments).
 
-## Key Patterns
+## Deployment
 
-### Agent Abstraction
+This application is designed to be deployed on Vercel. To deploy:
 
-All agent SDKs implement a unified `AgentProvider` interface, making it easy to swap implementations:
+1. Push your repository to GitHub
+2. Connect your repository to Vercel
+3. Configure environment variables
+4. Deploy
 
-```typescript
-interface AgentProvider {
-  id: string;
-  name: string;
-  execute(params: {
-    prompt: string;
-    sandboxContext: SandboxContext;
-    signal?: AbortSignal;
-  }): AsyncIterable<StreamChunk>;
-}
-```
+For custom domains, make sure to:
 
-### Streaming Architecture
-
-Agents yield `StreamChunk` events that get accumulated into `UIMessage` format:
-
-- `text-delta` - Incremental text output
-- `tool-start` - Tool execution beginning
-- `tool-result` - Tool execution result
-- `data` - Custom data parts (sandbox status, file writes, etc.)
-
-### Sandbox-First Execution
-
-All AI-generated code runs in isolated Firecracker MicroVMs via `@vercel/sandbox`. Templates define setup commands per framework.
-
-### oRPC Type-Safety
-
-Single router definition shared by server and client with full TypeScript inference.
-
-## Scripts
-
-```bash
-pnpm dev          # Start development server
-pnpm build        # Build for production
-pnpm start        # Start production server
-pnpm lint         # Run ESLint
-pnpm format       # Format with Prettier
-pnpm test         # Run tests
-pnpm test:watch   # Run tests in watch mode
-```
-
-## Learn More
-
-- [PLAN.md](./PLAN.md) - Detailed architecture documentation
-- [Vercel AI SDK](https://sdk.vercel.ai/docs) - AI SDK documentation
-- [Vercel Sandbox](https://vercel.com/docs/sandbox) - Sandbox documentation
-- [oRPC](https://orpc.unnoq.com/) - Type-safe RPC framework
+1. Add your root domain to Vercel
+2. Set up a wildcard DNS record (`*.yourdomain.com`) on Vercel
