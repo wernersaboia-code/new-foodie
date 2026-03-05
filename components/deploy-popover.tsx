@@ -1,0 +1,529 @@
+"use client";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Edit3,
+  ExternalLink,
+  Rocket,
+  UserPlus,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { rpc } from "@/lib/rpc/client";
+import type { LogEvent, ProjectOwnership } from "@/lib/rpc/procedures/deploy";
+import { useSandboxStore } from "@/lib/store/sandbox-store";
+
+type TextLogEvent = Extract<LogEvent, { text: string }>;
+
+function isTextLog(log: LogEvent): log is TextLogEvent {
+  return "text" in log;
+}
+
+type DeploymentState =
+  | { status: "idle" }
+  | { status: "deploying"; progress: string }
+  | { status: "building"; deploymentId: string; url?: string; logs: LogEvent[] }
+  | { status: "ready"; url: string; ownership: ProjectOwnership }
+  | { status: "error"; message: string; logs?: LogEvent[] };
+
+type ViewState = "main" | "domain";
+
+interface UseDeploymentOptions {
+  sandboxId: string;
+  initialProjectId?: string | null;
+  initialDeploymentUrl?: string | null;
+  initialOwnership?: ProjectOwnership;
+  customDomain?: string;
+  onDeploymentComplete?: (
+    projectId: string,
+    ownership: ProjectOwnership,
+    url: string,
+  ) => void;
+}
+
+function useDeployment({
+  sandboxId,
+  initialProjectId,
+  initialDeploymentUrl,
+  initialOwnership,
+  customDomain,
+  onDeploymentComplete,
+}: UseDeploymentOptions) {
+  const [deploymentId, setDeploymentId] = useState<string | null>(null);
+  const [deploymentUrl, setDeploymentUrl] = useState<string | null>(
+    initialDeploymentUrl ?? null,
+  );
+  const [projectId, setProjectId] = useState<string | null>(initialProjectId ?? null);
+  const [ownership, setOwnership] = useState<ProjectOwnership>(
+    initialOwnership ?? "partner",
+  );
+  const [logs, setLogs] = useState<LogEvent[]>([]);
+  const [readyState, setReadyState] = useState<string | null>(
+    // If we already have a completed deployment from the store, start in READY state
+    initialDeploymentUrl && initialProjectId ? "READY" : null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [isDeploying, setIsDeploying] = useState(false);
+  const abortRef = useRef(false);
+
+  // Sync from store when it changes (e.g. after session restore from Redis)
+  useEffect(() => {
+    if (initialProjectId !== undefined) {
+      setProjectId(initialProjectId);
+    }
+    if (initialDeploymentUrl) {
+      setDeploymentUrl(initialDeploymentUrl);
+      // Only set READY state if there's no active deployment in progress.
+      // During an active deployment, readyState is managed by the log stream.
+      if (!deploymentId) {
+        setReadyState("READY");
+      }
+    }
+    if (initialOwnership) {
+      setOwnership(initialOwnership);
+    }
+  }, [initialProjectId, initialDeploymentUrl, initialOwnership, deploymentId]);
+
+  useEffect(() => {
+    if (!deploymentId || !projectId) return;
+
+    abortRef.current = false;
+
+    const streamLogs = async () => {
+      try {
+        const iterator = await rpc.deploy.logs({ deploymentId, projectId });
+
+        for await (const entry of iterator) {
+          if (abortRef.current) break;
+
+          if (entry.type === "state" && entry.readyState) {
+            setReadyState(entry.readyState);
+          }
+
+          if (entry.type === "done" && entry.readyState) {
+            setReadyState(entry.readyState);
+          }
+
+          if (entry.type === "error") {
+            setError(entry.message || "Build failed");
+          }
+
+          setLogs((prev) => [...prev, entry]);
+        }
+      } catch (err) {
+        if (!abortRef.current) {
+          console.error("Log stream error:", err);
+        }
+      }
+    };
+
+    streamLogs();
+
+    return () => {
+      abortRef.current = true;
+    };
+  }, [deploymentId, projectId]);
+
+  const startDeployment = useCallback(async () => {
+    setError(null);
+    setLogs([]);
+    setReadyState(null);
+    setIsDeploying(true);
+
+    try {
+      const result = await rpc.deploy.files({
+        sandboxId,
+        projectId,
+        deploymentName: customDomain || undefined,
+      });
+
+      if (result.isOk()) {
+        setDeploymentUrl(result.value.url);
+        setDeploymentId(result.value.id);
+        setProjectId(result.value.projectId);
+        setOwnership(result.value.ownership);
+
+        // Notify parent that deployment was created (build is still in progress)
+        if (onDeploymentComplete) {
+          onDeploymentComplete(
+            result.value.projectId,
+            result.value.ownership,
+            result.value.url,
+          );
+        }
+
+        return result.value;
+      } else {
+        const message = result.error.message;
+        setError(message);
+        throw new Error(message);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Deployment failed";
+      setError(message);
+      throw e;
+    } finally {
+      setIsDeploying(false);
+    }
+  }, [sandboxId, projectId, customDomain, onDeploymentComplete]);
+
+  const getDeploymentState = useCallback((): DeploymentState => {
+    if (error) {
+      return {
+        status: "error",
+        message: error,
+        logs: logs.length > 0 ? logs : undefined,
+      };
+    }
+
+    if (isDeploying) {
+      return { status: "deploying", progress: "Starting deployment..." };
+    }
+
+    if (readyState === "READY" && deploymentUrl) {
+      return { status: "ready", url: deploymentUrl, ownership };
+    }
+
+    if (deploymentId && (readyState === "ERROR" || readyState === "CANCELED")) {
+      return { status: "error", message: "Deployment failed", logs };
+    }
+
+    if (deploymentId) {
+      return {
+        status: "building",
+        deploymentId,
+        url: deploymentUrl || undefined,
+        logs,
+      };
+    }
+
+    return { status: "idle" };
+  }, [isDeploying, deploymentId, deploymentUrl, readyState, logs, error, ownership]);
+
+  const reset = useCallback(() => {
+    abortRef.current = true;
+    setDeploymentId(null);
+    setDeploymentUrl(null);
+    setLogs([]);
+    setReadyState(null);
+    setError(null);
+  }, []);
+
+  return {
+    state: getDeploymentState(),
+    startDeployment,
+    reset,
+    projectId,
+    ownership,
+  };
+}
+
+interface DeployPopoverProps {
+  sandboxId: string | null;
+  disabled?: boolean;
+}
+
+export function DeployPopover({ sandboxId, disabled }: DeployPopoverProps) {
+  const [viewState, setViewState] = useState<ViewState>("main");
+  const [customDomain, setCustomDomain] = useState<string>("");
+  const [open, setOpen] = useState(false);
+  const [isClaimLoading, setIsClaimLoading] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Get project state from store
+  const storeProjectId = useSandboxStore((s) => s.projectId);
+  const storeOwnership = useSandboxStore((s) => s.projectOwnership);
+  const storeDeploymentUrl = useSandboxStore((s) => s.deploymentUrl);
+  const setProject = useSandboxStore((s) => s.setProject);
+
+  const handleDeploymentComplete = useCallback(
+    (projectId: string, ownership: ProjectOwnership, url: string) => {
+      setProject(projectId, ownership, url);
+    },
+    [setProject],
+  );
+
+  const { state, startDeployment, reset, projectId, ownership } = useDeployment({
+    sandboxId: sandboxId || "",
+    initialProjectId: storeProjectId,
+    initialDeploymentUrl: storeDeploymentUrl,
+    initialOwnership: storeOwnership ?? undefined,
+    customDomain: customDomain || undefined,
+    onDeploymentComplete: handleDeploymentComplete,
+  });
+
+  // Handle claim button click - redirect to OAuth with transfer code
+  const handleClaim = useCallback(async () => {
+    const currentProjectId = projectId || storeProjectId;
+    if (!currentProjectId || !sandboxId) return;
+
+    setIsClaimLoading(true);
+    try {
+      // Build redirect URL that includes sandboxId to restore state after OAuth
+      const redirectUrl = new URL(window.location.origin);
+      redirectUrl.searchParams.set("sandboxId", sandboxId);
+
+      const result = await rpc.claim.getClaimUrl({
+        projectId: currentProjectId,
+        redirectTo: redirectUrl.pathname + redirectUrl.search,
+      });
+
+      if (result.isOk()) {
+        // Redirect to OAuth flow with transfer code
+        const value = result.value as { url: string; transferCode: string; projectId: string };
+        window.location.href = value.url;
+      } else {
+        console.error("Failed to get claim URL:", result.error);
+      }
+    } catch (err) {
+      console.error("Claim error:", err);
+    } finally {
+      setIsClaimLoading(false);
+    }
+  }, [projectId, storeProjectId, sandboxId]);
+
+  useEffect(() => {
+    if (state.status === "building") {
+      logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [state]);
+
+  const canDeploy = sandboxId && !disabled;
+
+  const handleDeploy = useCallback(async () => {
+    if (!canDeploy) return;
+    await startDeployment();
+  }, [startDeployment, canDeploy]);
+
+  const handleBack = () => {
+    setViewState("main");
+  };
+
+  const handleAddDomain = () => {
+    setViewState("main");
+  };
+
+  const handleOpenChange = (newOpen: boolean) => {
+    setOpen(newOpen);
+    if (
+      !newOpen &&
+      state.status !== "building" &&
+      state.status !== "deploying" &&
+      state.status !== "ready"
+    ) {
+      reset();
+    }
+  };
+
+  if (viewState === "domain") {
+    return (
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <PopoverTrigger asChild>
+        <Button size="sm" disabled={!canDeploy}>
+          <Rocket className="h-4 w-4" />
+          Deploy
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-96 p-0">
+        <div className="flex items-center gap-2 border-b p-2">
+            <Button
+              aria-label="Back"
+              className="size-8"
+              onClick={handleBack}
+              size="icon"
+              variant="ghost"
+            >
+              <ChevronLeft className="h-3" />
+            </Button>
+            <h3 className="font-medium">Add a Custom Domain</h3>
+          </div>
+
+          <div className="space-y-4 p-4">
+            <p className="text-muted-foreground text-sm">
+              Assign a custom vercel.app subdomain to make your project more
+              memorable.
+            </p>
+
+            <div className="relative">
+              <Input
+                className="w-full pr-21"
+                onChange={(e) => setCustomDomain(e.target.value)}
+                placeholder="your-domain"
+                value={customDomain}
+              />
+              <span className="-translate-y-1/2 absolute top-1/2 right-3 text-muted-foreground text-sm">
+                .vercel.app
+              </span>
+            </div>
+
+            <Button className="w-full" onClick={handleAddDomain}>
+              Add Domain
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Button size="sm" disabled={!canDeploy}>
+          <Rocket className="h-4 w-4" />
+          Deploy
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[28rem] p-0">
+        <div className="space-y-4 p-4">
+          <div>
+            <h3 className="mb-2 font-semibold">Deploy to Vercel</h3>
+            <p className="text-muted-foreground text-sm">
+              Deploy this project to Vercel. You&apos;ll get a production URL
+              for your app.
+            </p>
+          </div>
+
+          {state.status === "idle" && (
+            <div className="space-y-2">
+              <Button
+                className="w-full justify-between shadow-none"
+                onClick={() => setViewState("domain")}
+                type="button"
+                variant="secondary"
+              >
+                <div className="flex items-center gap-3">
+                  <Edit3 className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">Customize Domain</span>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Button>
+
+
+            </div>
+          )}
+
+          {state.status === "building" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
+                Building...
+              </div>
+              <div className="h-48 overflow-y-auto rounded-md bg-zinc-950 p-3 font-mono text-xs">
+{state.logs.filter(isTextLog).map((log) => (
+                    <div
+                      key={`${log.timestamp}-${log.text.slice(0, 20)}`}
+                      className={
+                        log.type === "stderr"
+                          ? "text-red-400"
+                          : log.type === "command"
+                            ? "text-blue-400"
+                            : "text-zinc-300"
+                      }
+                    >
+                      {log.text}
+                    </div>
+                  ))}
+                <div ref={logsEndRef} />
+              </div>
+            </div>
+          )}
+
+          {state.status === "error" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm text-destructive">
+                <div className="h-2 w-2 rounded-full bg-destructive" />
+                {state.message}
+              </div>
+              {state.logs && state.logs.length > 0 && (
+                <div className="h-48 overflow-y-auto rounded-md bg-zinc-950 p-3 font-mono text-xs">
+                  {state.logs.filter(isTextLog).map((log) => (
+                    <div
+                      key={`${log.timestamp}-${log.text.slice(0, 20)}`}
+                      className={
+                        log.type === "stderr"
+                          ? "text-red-400"
+                          : log.type === "command"
+                            ? "text-blue-400"
+                            : "text-zinc-300"
+                      }
+                    >
+                      {log.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Button className="w-full" variant="outline" onClick={reset}>
+                Try Again
+              </Button>
+            </div>
+          )}
+
+          {state.status === "ready" ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <div className="h-2 w-2 rounded-full bg-green-500" />
+                Deployment complete
+              </div>
+              <Button
+                className="w-full"
+                onClick={() =>
+                  window.open(
+                    `https://${state.url}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                View Deployment
+                <ExternalLink className="h-4 w-4" />
+              </Button>
+
+              {/* Allow re-deploying with latest changes */}
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={handleDeploy}
+              >
+                Update Deployment
+              </Button>
+
+              {/* Show claim button for partner-owned projects */}
+              {state.ownership === "partner" && (
+                <div className="border-t pt-3">
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Claim this project to your Vercel account to manage it
+                    directly and make future updates.
+                  </p>
+                  <Button
+                    className="w-full"
+                    variant="secondary"
+                    onClick={handleClaim}
+                    disabled={isClaimLoading}
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    {isClaimLoading ? "Loading..." : "Claim to Your Account"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : state.status === "idle" ? (
+            <Button className="w-full" onClick={handleDeploy}>
+              Deploy to Production
+            </Button>
+          ) : state.status === "deploying" ? (
+            <Button className="w-full" disabled>
+              {state.progress}
+            </Button>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
